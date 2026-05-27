@@ -1,6 +1,10 @@
+"""Streamlit to-do list with JSON persistence."""
+
 import json
 from datetime import datetime
 from pathlib import Path
+
+import streamlit as st
 
 DATA_FILE = Path(__file__).parent / "tasks.json"
 
@@ -11,7 +15,6 @@ def load_tasks() -> list[dict]:
     try:
         return json.loads(DATA_FILE.read_text())
     except json.JSONDecodeError:
-        print(f"Warning: {DATA_FILE.name} is corrupted. Starting fresh.")
         return []
 
 
@@ -19,109 +22,75 @@ def save_tasks(tasks: list[dict]) -> None:
     DATA_FILE.write_text(json.dumps(tasks, indent=2))
 
 
-def show_tasks(tasks: list[dict]) -> None:
-    if not tasks:
-        print("\n  (no tasks yet — add one with option 1)\n")
-        return
-    print()
-    for i, t in enumerate(tasks, 1):
-        mark = "[x]" if t["done"] else "[ ]"
-        print(f"  {i:>2}. {mark} {t['title']}")
-    print()
+st.set_page_config(page_title="To-do list", page_icon="✅", layout="centered")
+st.title("✅ To-do list")
+
+if "tasks" not in st.session_state:
+    st.session_state.tasks = load_tasks()
+
+tasks = st.session_state.tasks
 
 
-def prompt_index(tasks: list[dict], action: str) -> int | None:
-    if not tasks:
-        print("No tasks to " + action + ".")
-        return None
-    raw = input(f"Task number to {action}: ").strip()
-    if not raw.isdigit():
-        print("Please enter a number.")
-        return None
-    idx = int(raw) - 1
-    if not 0 <= idx < len(tasks):
-        print("That task number doesn't exist.")
-        return None
-    return idx
-
-
-def add_task(tasks: list[dict]) -> None:
-    title = input("New task: ").strip()
-    if not title:
-        print("Task title can't be empty.")
-        return
-    tasks.append({
-        "title": title,
-        "done": False,
-        "created": datetime.now().isoformat(timespec="seconds"),
-    })
-    print(f"Added: {title}")
-
-
-def toggle_task(tasks: list[dict]) -> None:
-    idx = prompt_index(tasks, "toggle")
-    if idx is None:
-        return
-    tasks[idx]["done"] = not tasks[idx]["done"]
-    state = "done" if tasks[idx]["done"] else "not done"
-    print(f"Marked '{tasks[idx]['title']}' as {state}.")
-
-
-def delete_task(tasks: list[dict]) -> None:
-    idx = prompt_index(tasks, "delete")
-    if idx is None:
-        return
-    removed = tasks.pop(idx)
-    print(f"Deleted: {removed['title']}")
-
-
-def clear_done(tasks: list[dict]) -> None:
-    before = len(tasks)
-    tasks[:] = [t for t in tasks if not t["done"]]
-    print(f"Cleared {before - len(tasks)} completed task(s).")
-
-
-MENU = """
-What would you like to do?
-  1. Add task
-  2. Toggle done/undone
-  3. Delete task
-  4. Clear all completed
-  5. Quit
-"""
-
-
-def main() -> None:
-    tasks = load_tasks()
-    print("=" * 40)
-    print(" To-do list")
-    print("=" * 40)
-
-    actions = {
-        "1": add_task,
-        "2": toggle_task,
-        "3": delete_task,
-        "4": clear_done,
-    }
-
-    while True:
-        show_tasks(tasks)
-        print(MENU)
-        choice = input("Choice [1-5]: ").strip()
-        if choice == "5" or choice.lower() in {"q", "quit", "exit"}:
-            save_tasks(tasks)
-            print("Saved. Bye!")
-            return
-        action = actions.get(choice)
-        if action is None:
-            print("Invalid choice — pick 1-5.")
-            continue
-        action(tasks)
+def add_task() -> None:
+    title = st.session_state.new_task.strip()
+    if title:
+        tasks.append({
+            "title": title,
+            "done": False,
+            "created": datetime.now().isoformat(timespec="seconds"),
+        })
         save_tasks(tasks)
+        st.session_state.new_task = ""
 
 
-if __name__ == "__main__":
-    try:
-        main()
-    except (KeyboardInterrupt, EOFError):
-        print("\nInterrupted. Changes saved up to last action.")
+st.text_input(
+    "New task",
+    key="new_task",
+    placeholder="What do you need to do?",
+    on_change=add_task,
+    label_visibility="collapsed",
+)
+
+st.divider()
+
+if not tasks:
+    st.info("No tasks yet — add one above.")
+else:
+    for i, task in enumerate(tasks):
+        col_check, col_title, col_delete = st.columns([1, 10, 1])
+
+        with col_check:
+            new_done = st.checkbox(
+                "done",
+                value=task["done"],
+                key=f"done_{i}_{task['created']}",
+                label_visibility="collapsed",
+            )
+            if new_done != task["done"]:
+                task["done"] = new_done
+                save_tasks(tasks)
+                st.rerun()
+
+        with col_title:
+            if task["done"]:
+                st.markdown(f"~~{task['title']}~~")
+            else:
+                st.markdown(task["title"])
+
+        with col_delete:
+            if st.button("🗑", key=f"del_{i}_{task['created']}", help="Delete"):
+                tasks.pop(i)
+                save_tasks(tasks)
+                st.rerun()
+
+    st.divider()
+    done_count = sum(1 for t in tasks if t["done"])
+    total = len(tasks)
+    col_stats, col_clear = st.columns([3, 1])
+    with col_stats:
+        st.caption(f"{done_count} of {total} done")
+    with col_clear:
+        if done_count and st.button("Clear completed"):
+            st.session_state.tasks = [t for t in tasks if not t["done"]]
+            save_tasks(st.session_state.tasks)
+            st.rerun()
